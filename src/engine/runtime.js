@@ -440,6 +440,19 @@ class Runtime extends EventEmitter {
         this.interpolationEnabled = false;
 
         this._defaultStoredSettings = this._generateAllProjectOptions();
+
+        /**
+         * TW: We support a "packaged runtime" mode. This can be used when:
+         *  - there will never be an editor attached such as scratch-gui or scratch-blocks
+         *  - the project will never be exported with saveProjectSb3()
+         *  - original costume and sound data is not needed
+         * In this mode, the runtime is able to discard large amounts of data and avoid some processing
+         * to make projects load faster and use less memory.
+         * This is not designed to protect projects from copying as someone can still copy the data that
+         * gets fed into the runtime in the first place.
+         * This mode is used by the TurboWarp Packager.
+         */
+        this.isPackaged = false;
     }
 
     /**
@@ -1723,6 +1736,28 @@ class Runtime extends EventEmitter {
      */
     attachStorage (storage) {
         this.storage = storage;
+
+        if (this.isPackaged) {
+            // In packaged runtime mode, generating real asset IDs is a waste of time.
+            // We do still want to preserve every asset having a unique ID.
+            const originalCreateAsset = storage.createAsset;
+            let assetIdCounter = 0;
+            // eslint-disable-next-line no-unused-vars
+            storage.createAsset = function packagedCreateAsset (assetType, dataFormat, data, assetId, generateId) {
+                if (!assetId) {
+                    assetId = (++assetIdCounter).toString();
+                }
+                return originalCreateAsset.call(
+                    this,
+                    assetType,
+                    dataFormat,
+                    data,
+                    assetId,
+                    // Never generate real asset ID
+                    false
+                );
+            };
+        }
     }
 
     // -----------------------------------------------------------------------------
@@ -2443,8 +2478,15 @@ class Runtime extends EventEmitter {
         // no-op
     }
 
+    /**
+     * TW: Enable "packaged runtime" mode. This is a one-way operation.
+     */
     convertToPackagedRuntime () {
-        // no-op
+        if (this.storage) {
+            throw new Error('convertToPackagedRuntime must be called before attachStorage');
+        }
+
+        this.isPackaged = true;
     }
 
     /**

@@ -1,10 +1,23 @@
 const StringUtil = require('../util/string-util');
 const log = require('../util/log');
+const AsyncLimiter = require('../util/async-limiter');
 const {loadSvgString, serializeSvgToString} = require('scratch-svg-renderer');
+const {parseVectorMetadata} = require('../serialization/tw-costume-import-export');
 
 const loadVector_ = function (costume, runtime, rotationCenter, optVersion) {
     return new Promise(resolve => {
         let svgString = costume.asset.decodeText();
+
+        // TW: We allow SVGs to specify their rotation center using a special comment.
+        if (typeof rotationCenter === 'undefined') {
+            const parsedRotationCenter = parseVectorMetadata(svgString);
+            if (parsedRotationCenter) {
+                rotationCenter = parsedRotationCenter;
+                costume.rotationCenterX = rotationCenter[0];
+                costume.rotationCenterY = rotationCenter[1];
+            }
+        }
+    
         // SVG Renderer load fixes "quirks" associated with Scratch 2 projects
         if (optVersion && optVersion === 2) {
             // scratch-svg-renderer fixes syntax that causes loading issues,
@@ -31,6 +44,10 @@ const loadVector_ = function (costume, runtime, rotationCenter, optVersion) {
             costume.rotationCenterX = rotationCenter[0];
             costume.rotationCenterY = rotationCenter[1];
             costume.bitmapResolution = 1;
+        }
+
+        if (runtime.isPackaged) {
+            costume.asset = null;
         }
 
         resolve(costume);
@@ -84,7 +101,11 @@ const canvasPool = (function () {
     return new CanvasPool();
 }());
 
-const readImage = src => new Promise((resolve, reject) => {
+/**
+ * @param {string} src URL of image
+ * @returns {Promise<HTMLImageElement>}
+ */
+const readAsImageElement = src => new Promise((resolve, reject) => {
     const image = new Image();
     image.onload = function () {
         resolve(image);
@@ -99,14 +120,31 @@ const readImage = src => new Promise((resolve, reject) => {
     image.src = src;
 });
 
-const persistentReadImage = async src => {
+/**
+ * @param {Asset} asset scratch-storage asset
+ * @returns {Promise<HTMLImageElement|ImageBitmap>}
+ */
+const _persistentReadImage = async asset => {
     // Sometimes, when a lot of images are loaded at once, especially in Chrome, reading an image
     // can throw an error even on valid images. To mitigate this, we'll retry image reading a few
     // time with delays.
     let firstError;
     for (let i = 0; i < 3; i++) {
         try {
-            return await readImage(src);
+            if (typeof createImageBitmap === 'function') {
+                const imageBitmap = await createImageBitmap(
+                    new Blob([asset.data.buffer], {type: asset.assetType.contentType})
+                );
+                // If we do too many createImageBitmap at the same time, some browsers (Chrome) will
+                // sometimes resolve with undefined. We limit concurrency so this shouldn't ever
+                // happen, but if it somehow does, throw an error so it can be retried or so that it
+                // falls back to scratch's broken costume handling.
+                if (!imageBitmap) {
+                    throw new Error(`createImageBitmap resolved with ${imageBitmap}`);
+                }
+                return imageBitmap;
+            }
+            return await readAsImageElement(asset.encodeDataURI());
         } catch (e) {
             if (!firstError) {
                 firstError = e;
@@ -117,6 +155,9 @@ const persistentReadImage = async src => {
     }
     throw firstError;
 };
+
+// Browsers break when we do too many createImageBitmap at the same time.
+const readImage = new AsyncLimiter(_persistentReadImage, 25);
 
 /**
  * Return a promise to fetch a bitmap from storage and return it as a canvas
@@ -145,7 +186,7 @@ const fetchBitmapCanvas_ = function (costume, runtime, rotationCenter) {
             return null;
         }
 
-        return persistentReadImage(asset.encodeDataURI());
+        return readImage.do(asset);
     }))
         .then(([baseImageElement, textImageElement]) => {
             if (!baseImageElement) {
@@ -284,6 +325,11 @@ const loadBitmap_ = function (costume, runtime, _rotationCenter) {
                 costume.rotationCenterY = rotationCenter[1] * 2;
                 costume.bitmapResolution = 2;
             }
+
+            if (runtime.isPackaged) {
+                costume.asset = null;
+            }
+
             return costume;
         });
 };

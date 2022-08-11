@@ -220,3 +220,25 @@ test('currentStepTime default value', t => {
     t.ok(rt.currentStepTime > 0);
     t.end();
 });
+
+test('convertToPackagedRuntime', t => {
+    const rt = new Runtime();
+    t.equal(rt.isPackaged, false);
+    rt.convertToPackagedRuntime();
+    t.equal(rt.isPackaged, true);
+    t.end();
+});
+
+test('convertToPackagedRuntime and attachStorage call order', t => {
+    try {
+        const rt1 = new Runtime();
+        rt1.attachStorage({});
+        rt1.convertToPackagedRuntime();
+    } catch (e) {
+        t.equal(e.message, 'convertToPackagedRuntime must be called before attachStorage');
+    }
+    const rt2 = new Runtime();
+    rt2.convertToPackagedRuntime();
+    rt2.attachStorage({});
+    t.end();
+});
