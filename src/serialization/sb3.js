@@ -539,12 +539,12 @@ const serializeMonitors = function (monitors, runtime) {
     const xOffset = (runtime.stageWidth - 480) / 2;
     const yOffset = (runtime.stageHeight - 360) / 2;
     return monitors.valueSeq()
-        // TW: Old versions let people enable a monitor for "last key pressed" which Scratch won't remove
-        // automatically. As a temporary hack until upstream fixes this, we'll make sure to remove this
-        // monitor from any serialized projects so that projects won't use the TW blocks extension
-        // unnecessarily as they won't be able to load in Scratch.
+        // Don't include hidden monitors from extensions
         // https://github.com/LLK/scratch-vm/issues/2331
-        .filter(monitorData => monitorData.id !== 'tw_getLastKeyPressed')
+        .filter(monitorData => {
+            const extensionID = getExtensionIdForOpcode(monitorData.opcode);
+            return !extensionID || monitorData.visible;
+        })
         .map(monitorData => {
             const serializedMonitor = {
                 id: monitorData.id,
@@ -608,6 +608,31 @@ const serialize = function (runtime, targetId, {allowOptimization = true} = {}) 
 
     // Assemble extension list
     obj.extensions = Array.from(extensions);
+
+    // Save list of URLs to load the current extensions
+    // Extension manager only exists when runtime is wrapped by VirtualMachine
+    if (runtime.extensionManager) {
+        // We'll save the extensions in the format:
+        // {
+        //   "extension_id": "https://...",
+        //   "other_id": "https://..."
+        // }
+        // Which lets the VM know which URLs correspond to which IDs, which is useful when the project
+        // is being loaded. For example, if the extension is eventually converted to a builtin extension
+        // or if it is already loaded, then it doesn't need to fetch the script again.
+        const extensionURLs = runtime.extensionManager.getExtensionURLs();
+        const urlsToSave = {};
+        for (const extension of extensions) {
+            const url = extensionURLs[extension];
+            if (typeof url === 'string') {
+                urlsToSave[extension] = url;
+            }
+        }
+        // Only save this object if any URLs would actually be saved.
+        if (Object.keys(urlsToSave).length !== 0) {
+            obj.extensionURLs = urlsToSave;
+        }
+    }
 
     // Assemble metadata
     const meta = Object.create(null);
@@ -1310,6 +1335,11 @@ const deserialize = function (json, runtime, zip, isSingleSprite) {
         runtime.origin = json.meta.origin;
     } else {
         runtime.origin = null;
+    }
+
+    // Extract custom extension IDs, if they exist.
+    if (json.extensionURLs) {
+        extensions.extensionURLs = new Map(Object.entries(json.extensionURLs));
     }
 
     // First keep track of the current target order in the json,

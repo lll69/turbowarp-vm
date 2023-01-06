@@ -54,6 +54,7 @@ const generatorNameVariablePool = new VariablePool('gen');
  * @property {() => string} asNumberOrNaN
  * @property {() => string} asString
  * @property {() => string} asBoolean
+ * @property {() => string} asColor
  * @property {() => string} asUnknown
  * @property {() => string} asSafe
  * @property {() => boolean} isAlwaysNumber
@@ -91,6 +92,10 @@ class TypedInput {
     asBoolean () {
         if (this.type === TYPE_BOOLEAN) return this.source;
         return `toBoolean(${this.source})`;
+    }
+
+    asColor () {
+        return this.asUnknown();
     }
 
     asUnknown () {
@@ -149,6 +154,15 @@ class ConstantInput {
     asBoolean () {
         // Compute at compilation time
         return Cast.toBoolean(this.constantValue).toString();
+    }
+
+    asColor () {
+        // Attempt to parse hex code at compilation time
+        if (/^#[0-9a-f]{6,8}$/i.test(this.constantValue)) {
+            const hex = this.constantValue.substr(1);
+            return Number.parseInt(hex, 16).toString();
+        }
+        return this.asUnknown();
     }
 
     asUnknown () {
@@ -249,6 +263,10 @@ class VariableInput {
     asBoolean () {
         if (this.type === TYPE_BOOLEAN) return this.source;
         return `toBoolean(${this.source})`;
+    }
+
+    asColor () {
+        return this.asUnknown();
     }
 
     asUnknown () {
@@ -491,7 +509,7 @@ class JSGenerator {
         case 'op.contains':
             return new TypedInput(`(${this.descendInput(node.string).asString()}.toLowerCase().indexOf(${this.descendInput(node.contains).asString()}.toLowerCase()) !== -1)`, TYPE_BOOLEAN);
         case 'op.cos':
-            return new TypedInput(`(Math.round(Math.cos((Math.PI * ${this.descendInput(node.value).asNumber()}) / 180) * 1e10) / 1e10)`, TYPE_NUMBER);
+            return new TypedInput(`(Math.round(Math.cos((Math.PI * ${this.descendInput(node.value).asNumber()}) / 180) * 1e10) / 1e10)`, TYPE_NUMBER_NAN);
         case 'op.divide':
             // Needs to be marked as NaN because 0 / 0 === NaN
             return new TypedInput(`(${this.descendInput(node.left).asNumber()} / ${this.descendInput(node.right).asNumber()})`, TYPE_NUMBER_NAN);
@@ -583,16 +601,17 @@ class JSGenerator {
             return new TypedInput(`(${this.descendInput(node.left).asBoolean()} || ${this.descendInput(node.right).asBoolean()})`, TYPE_BOOLEAN);
         case 'op.random':
             if (node.useInts) {
+                // Both inputs are ints, so we know neither are NaN
                 return new TypedInput(`randomInt(${this.descendInput(node.low).asNumber()}, ${this.descendInput(node.high).asNumber()})`, TYPE_NUMBER);
             }
             if (node.useFloats) {
-                return new TypedInput(`randomFloat(${this.descendInput(node.low).asNumber()}, ${this.descendInput(node.high).asNumber()})`, TYPE_NUMBER);
+                return new TypedInput(`randomFloat(${this.descendInput(node.low).asNumber()}, ${this.descendInput(node.high).asNumber()})`, TYPE_NUMBER_NAN);
             }
-            return new TypedInput(`runtime.ext_scratch3_operators._random(${this.descendInput(node.low).asUnknown()}, ${this.descendInput(node.high).asUnknown()})`, TYPE_NUMBER);
+            return new TypedInput(`runtime.ext_scratch3_operators._random(${this.descendInput(node.low).asUnknown()}, ${this.descendInput(node.high).asUnknown()})`, TYPE_NUMBER_NAN);
         case 'op.round':
             return new TypedInput(`Math.round(${this.descendInput(node.value).asNumber()})`, TYPE_NUMBER);
         case 'op.sin':
-            return new TypedInput(`(Math.round(Math.sin((Math.PI * ${this.descendInput(node.value).asNumber()}) / 180) * 1e10) / 1e10)`, TYPE_NUMBER);
+            return new TypedInput(`(Math.round(Math.sin((Math.PI * ${this.descendInput(node.value).asNumber()}) / 180) * 1e10) / 1e10)`, TYPE_NUMBER_NAN);
         case 'op.sqrt':
             // Needs to be marked as NaN because Math.sqrt(-1) === NaN
             return new TypedInput(`Math.sqrt(${this.descendInput(node.value).asNumber()})`, TYPE_NUMBER_NAN);
@@ -600,14 +619,14 @@ class JSGenerator {
             // Needs to be marked as NaN because Infinity - Infinity === NaN
             return new TypedInput(`(${this.descendInput(node.left).asNumber()} - ${this.descendInput(node.right).asNumber()})`, TYPE_NUMBER_NAN);
         case 'op.tan':
-            return new TypedInput(`Math.tan(${this.descendInput(node.value).asNumber()} * Math.PI / 180)`, TYPE_NUMBER);
+            return new TypedInput(`tan(${this.descendInput(node.value).asNumber()})`, TYPE_NUMBER_NAN);
         case 'op.10^':
             return new TypedInput(`(10 ** ${this.descendInput(node.value).asNumber()})`, TYPE_NUMBER);
 
         case 'sensing.answer':
             return new TypedInput(`runtime.ext_scratch3_sensing._answer`, TYPE_STRING);
         case 'sensing.colorTouchingColor':
-            return new TypedInput(`target.colorIsTouchingColor(colorToList(${this.descendInput(node.target).asUnknown()}), colorToList(${this.descendInput(node.mask).asUnknown()}))`, TYPE_BOOLEAN);
+            return new TypedInput(`target.colorIsTouchingColor(colorToList(${this.descendInput(node.target).asColor()}), colorToList(${this.descendInput(node.mask).asColor()}))`, TYPE_BOOLEAN);
         case 'sensing.date':
             return new TypedInput(`(new Date().getDate())`, TYPE_NUMBER);
         case 'sensing.dayofweek':
@@ -668,7 +687,7 @@ class JSGenerator {
         case 'sensing.touching':
             return new TypedInput(`target.isTouchingObject(${this.descendInput(node.object).asUnknown()})`, TYPE_BOOLEAN);
         case 'sensing.touchingColor':
-            return new TypedInput(`target.isTouchingColor(colorToList(${this.descendInput(node.color).asUnknown()}))`, TYPE_BOOLEAN);
+            return new TypedInput(`target.isTouchingColor(colorToList(${this.descendInput(node.color).asColor()}))`, TYPE_BOOLEAN);
         case 'sensing.username':
             return new TypedInput('runtime.ioDevices.userData.getUsername()', TYPE_STRING);
         case 'sensing.year':
@@ -694,15 +713,13 @@ class JSGenerator {
      */
     descendStackedBlock (node) {
         switch (node.kind) {
-        case 'addons.call':
-            this.source += `yield* callAddonBlock("${sanitize(node.code)}","${sanitize(node.blockId)}",{`;
-            this.yielded();
-            for (const argumentName of Object.keys(node.arguments)) {
-                const argumentValue = node.arguments[argumentName];
-                this.source += `"${sanitize(argumentName)}":${this.descendInput(argumentValue).asSafe()},`;
-            }
-            this.source += '});\n';
+        case 'addons.call': {
+            const inputs = this.descendInputRecord(node.arguments);
+            const blockFunction = `runtime.getAddonBlock("${sanitize(node.code)}").callback`;
+            const blockId = `"${sanitize(node.blockId)}"`;
+            this.source += `yield* executeInCompatibilityLayer(${inputs}, ${blockFunction}, ${this.isWarp}, false, ${blockId});\n`;
             break;
+        }
 
         case 'compat': {
             // If the last command in a loop returns a promise, immediately continue to the next iteration.
@@ -981,7 +998,7 @@ class JSGenerator {
             this.source += `${PEN_EXT}._setPenShadeToNumber(${this.descendInput(node.shade).asNumber()}, target);\n`;
             break;
         case 'pen.setColor':
-            this.source += `${PEN_EXT}._setPenColorToColor(${this.descendInput(node.color).asUnknown()}, target);\n`;
+            this.source += `${PEN_EXT}._setPenColorToColor(${this.descendInput(node.color).asColor()}, target);\n`;
             break;
         case 'pen.setParam':
             this.source += `${PEN_EXT}._setOrChangeColorParam(${this.descendInput(node.param).asString()}, ${this.descendInput(node.value).asNumber()}, ${PEN_STATE}, false);\n`;
@@ -1066,6 +1083,21 @@ class JSGenerator {
             log.warn(`JS: Unknown stacked block: ${node.kind}`, node);
             throw new Error(`JS: Unknown stacked block: ${node.kind}`);
         }
+    }
+
+    /**
+     * Compile a Record of input objects into a safe JS string.
+     * @param {Record<string, unknown>} inputs
+     * @returns {string}
+     */
+    descendInputRecord (inputs) {
+        let result = '{';
+        for (const name of Object.keys(inputs)) {
+            const node = inputs[name];
+            result += `"${sanitize(name)}":${this.descendInput(node).asSafe()},`;
+        }
+        result += '}';
+        return result;
     }
 
     resetVariableInputs () {
@@ -1196,7 +1228,7 @@ class JSGenerator {
             result += `"${sanitize(fieldName)}":"${sanitize(field)}",`;
         }
         const opcodeFunction = this.evaluateOnce(`runtime.getOpcodeFunction("${sanitize(opcode)}")`);
-        result += `}, ${opcodeFunction}, ${this.isWarp}, ${setFlags})`;
+        result += `}, ${opcodeFunction}, ${this.isWarp}, ${setFlags}, null)`;
 
         return result;
     }
@@ -1279,8 +1311,15 @@ class JSGenerator {
             log.info(`JS: ${this.target.getName()}: compiled ${this.script.procedureCode || 'script'}`, factory);
         }
 
+        if (JSGenerator.testingApparatus) {
+            JSGenerator.testingApparatus.report(this, factory);
+        }
+
         return fn;
     }
 }
+
+// Test hook used by automated snapshot testing.
+JSGenerator.testingApparatus = null;
 
 module.exports = JSGenerator;

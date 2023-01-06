@@ -19,7 +19,6 @@ const formatMessage = require('format-message');
 
 const Variable = require('./engine/variable');
 const newBlockIds = require('./util/new-block-ids');
-const ExtendedJSON = require('./util/tw-extended-json');
 
 const {loadCostume} = require('./import/load-costume.js');
 const {loadSound} = require('./import/load-sound.js');
@@ -197,7 +196,9 @@ class VirtualMachine extends EventEmitter {
             this.emit(Runtime.TURBO_MODE_ON);
         });
 
-        this.extensionManager = new ExtensionManager(this.runtime);
+        this.extensionManager = new ExtensionManager(this);
+        this.securityManager = this.extensionManager.securityManager;
+        this.runtime.extensionManager = this.extensionManager;
 
         // Load core extensions
         for (const id of CORE_EXTENSIONS) {
@@ -413,19 +414,7 @@ class VirtualMachine extends EventEmitter {
             // input should be parsed/validated as an entire project (and not a single sprite)
             validate(input, false, (error, res) => {
                 if (error) {
-                    // tw: if parsing failed, but the result appears to be JSON,
-                    // try an alternative JSON parser that supports some non-standard literals.
-                    // This is a dirty hack to fix https://github.com/LLK/scratch-parser/issues/60
-                    if (input[0] !== '{' && input[0] !== '{'.charCodeAt(0)) {
-                        return reject(error);
-                    }
-                    if (typeof input !== 'string') input = new TextDecoder().decode(input);
-                    input = ExtendedJSON.parse(input);
-                    input = JSON.stringify(input);
-                    return validate(input, false, (error2, res2) => {
-                        if (error2) return reject(error);
-                        resolve(res2);
-                    });
+                    return reject(error);
                 }
                 resolve(res);
             });
@@ -490,9 +479,9 @@ class VirtualMachine extends EventEmitter {
     }
 
     /**
-     * @returns {string} Project in a Scratch 3.0 JSON representation.
+     * @returns {JSZip} JSZip zip object representing the sb3.
      */
-    saveProjectSb3 () {
+    _saveProjectZip () {
         const soundDescs = serializeSounds(this.runtime);
         const costumeDescs = serializeCostumes(this.runtime);
         const projectJson = this.toJSON();
@@ -505,18 +494,36 @@ class VirtualMachine extends EventEmitter {
         zip.file('project.json', projectJson);
         this._addFileDescsToZip(soundDescs.concat(costumeDescs), zip);
 
-        return zip.generateAsync({
-            type: 'blob',
+        return zip;
+    }
+
+    /**
+     * @param {JSZip.OutputType} [type] JSZip output type. Defaults to 'blob' for Scratch compatibility.
+     * @returns {Promise<unknown>} Compressed sb3 file in a type determined by the type argument.
+     */
+    saveProjectSb3 (type) {
+        return this._saveProjectZip().generateAsync({
+            type: type || 'blob',
             mimeType: 'application/x.scratch.sb3',
-            compression: 'DEFLATE',
-            compressionOptions: {
-                level: 6 // Tradeoff between best speed (1) and best compression (9)
-            }
+            compression: 'DEFLATE'
         });
     }
 
     /**
-     * tw: Serailize the project into a map of files without actually zipping the project.
+     * @param {JSZip.OutputType} [type] JSZip output type. Defaults to 'arraybuffer'.
+     * @returns {StreamHelper} JSZip StreamHelper object generating the compressed sb3.
+     * See: https://stuk.github.io/jszip/documentation/api_streamhelper.html
+     */
+    saveProjectSb3Stream (type) {
+        return this._saveProjectZip().generateInternalStream({
+            type: type || 'arraybuffer',
+            mimeType: 'application/x.scratch.sb3',
+            compression: 'DEFLATE'
+        });
+    }
+
+    /**
+     * tw: Serialize the project into a map of files without actually zipping the project.
      * @returns {Record<Uint8Array>} Files of the project.
      */
     saveProjectSb3DontZip () {
@@ -636,11 +643,48 @@ class VirtualMachine extends EventEmitter {
             .then(({targets, extensions}) => {
                 if (typeof performance !== 'undefined') {
                     performance.mark('scratch-vm-deserialize-end');
-                    performance.measure('scratch-vm-deserialize',
-                        'scratch-vm-deserialize-start', 'scratch-vm-deserialize-end');
+                    try {
+                        performance.measure('scratch-vm-deserialize',
+                            'scratch-vm-deserialize-start', 'scratch-vm-deserialize-end');
+                    } catch (e) {
+                        // performance.measure() will throw an error if the start deserialize
+                        // marker was removed from memory before we finished deserializing
+                        // the project. We've seen this happen a couple times when loading
+                        // very large projects.
+                        log.error(e);
+                    }
                 }
                 return this.installTargets(targets, extensions, true);
             });
+    }
+
+    /**
+     * @param {string[]} extensionIDs The IDs of the extensions
+     * @param {Map<string, string>} extensionURLs A map of extension ID to URL
+     */
+    async _loadExtensions (extensionIDs, extensionURLs = new Map()) {
+        const extensionPromises = [];
+        for (const extensionID of extensionIDs) {
+            if (this.extensionManager.isExtensionLoaded(extensionID)) {
+                // Already loaded
+            } else if (this.extensionManager.isBuiltinExtension(extensionID)) {
+                // Builtin extension
+                this.extensionManager.loadExtensionIdSync(extensionID);
+                continue;
+            } else {
+                // Custom extension
+                const url = extensionURLs.get(extensionID);
+                if (!url) {
+                    throw new Error(`Unknown extension: ${extensionID}`);
+                }
+                if (await this.securityManager.canLoadExtensionFromProject(url)) {
+                    extensionPromises.push(this.extensionManager.loadExtensionURL(url));
+                } else {
+                    throw new Error(`Permission to load extension denied: ${extensionID}`);
+                }
+            }
+        }
+        return Promise.all(extensionPromises);
     }
 
     /**
@@ -653,18 +697,9 @@ class VirtualMachine extends EventEmitter {
     async installTargets (targets, extensions, wholeProject) {
         await this.extensionManager.allAsyncExtensionsLoaded();
 
-        const extensionPromises = [];
-
-        extensions.extensionIDs.forEach(extensionID => {
-            if (!this.extensionManager.isExtensionLoaded(extensionID)) {
-                const extensionURL = extensions.extensionURLs.get(extensionID) || extensionID;
-                extensionPromises.push(this.extensionManager.loadExtensionURL(extensionURL));
-            }
-        });
-
         targets = targets.filter(target => !!target);
 
-        return Promise.all(extensionPromises).then(() => {
+        return this._loadExtensions(extensions.extensionIDs, extensions.extensionURLs).then(() => {
             targets.forEach(target => {
                 this.runtime.addTarget(target);
                 (/** @type RenderedTarget */ target).updateAllDrawableProperties();
@@ -1423,12 +1458,7 @@ class VirtualMachine extends EventEmitter {
             .filter(id => !this.extensionManager.isExtensionLoaded(id)) // and remove loaded extensions
         );
 
-        // Create an array promises for extensions to load
-        const extensionPromises = Array.from(extensionIDs,
-            id => this.extensionManager.loadExtensionURL(id)
-        );
-
-        return Promise.all(extensionPromises).then(() => {
+        return this._loadExtensions(extensionIDs).then(() => {
             copiedBlocks.forEach(block => {
                 target.blocks.createBlock(block);
             });

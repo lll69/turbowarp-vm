@@ -11,7 +11,7 @@ const globalState = {
     Timer: require('../util/timer'),
     Cast: require('../util/cast'),
     log: require('../util/log'),
-    compatibilityLayerBlockUtility: require('./compat-block-utility'),
+    blockUtility: require('./compat-block-utility'),
     thread: null
 };
 
@@ -84,16 +84,23 @@ runtimeFunctions.waitThreads = `const waitThreads = function*(threads) {
 }`;
 
 /**
- * Wait until a Promise resolves or rejects before continuing.
+ * waitPromise: Wait until a Promise resolves or rejects before continuing.
  * @param {Promise} promise The promise to wait for.
  * @returns {*} the value that the promise resolves to, otherwise undefined if the promise rejects
  */
 
 /**
- * Execute a scratch-vm primitive.
+ * isPromise: Determine if a value is Promise-like
+ * @param {unknown} promise The value to check
+ * @returns {promise is PromiseLike} True if the value is Promise-like (has a .then())
+ */
+
+/**
+ * executeInCompatibilityLayer: Execute a scratch-vm primitive.
  * @param {*} inputs The inputs to pass to the block.
  * @param {function} blockFunction The primitive's function.
  * @param {boolean} useFlags Whether to set flags (hasResumedFromPromise)
+ * @param {string} blockId Block ID to set on the emulated block utility.
  * @returns {*} the value returned by the block, if any.
  */
 runtimeFunctions.executeInCompatibilityLayer = `let hasResumedFromPromise = false;
@@ -118,7 +125,13 @@ const waitPromise = function*(promise) {
 
     return returnValue;
 };
-const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, useFlags) {
+const isPromise = value => (
+    // see engine/execute.js
+    value !== null &&
+    typeof value === 'object' &&
+    typeof value.then === 'function'
+);
+const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, useFlags, blockId) {
     const thread = globalState.thread;
 
     // reset the stackframe
@@ -126,18 +139,10 @@ const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, use
     thread.stackFrames[thread.stackFrames.length - 1].reuse(isWarp);
 
     const executeBlock = () => {
-        const compatibilityLayerBlockUtility = globalState.compatibilityLayerBlockUtility;
-        compatibilityLayerBlockUtility.thread = thread;
-        compatibilityLayerBlockUtility.sequencer = thread.target.runtime.sequencer;
-        return blockFunction(inputs, compatibilityLayerBlockUtility);
+        const blockUtility = globalState.blockUtility;
+        blockUtility.init(thread, blockId);
+        return blockFunction(inputs, blockUtility);
     };
-
-    const isPromise = value => (
-        // see engine/execute.js
-        value !== null &&
-        typeof value === 'object' &&
-        typeof value.then === 'function'
-    );
 
     let returnValue = executeBlock();
 
@@ -147,6 +152,13 @@ const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, use
             hasResumedFromPromise = true;
         }
         return returnValue;
+    }
+
+    if (thread.status === 1 /* STATUS_PROMISE_WAIT */) {
+        // Something external is forcing us to stop
+        yield;
+        // Make up a return value because whatever is forcing us to stop can't specify one
+        return '';
     }
 
     while (thread.status === 2 /* STATUS_YIELD */ || thread.status === 3 /* STATUS_YIELD_TICK */) {
@@ -171,35 +183,16 @@ const executeInCompatibilityLayer = function*(inputs, blockFunction, isWarp, use
             }
             return returnValue;
         }
+
+        if (thread.status === 1 /* STATUS_PROMISE_WAIT */) {
+            yield;
+            return '';
+        }
     }
 
     // todo: do we have to do anything extra if status is STATUS_DONE?
 
     return returnValue;
-}`;
-
-/**
- * Run an addon block.
- * @param {string} procedureCode The block's procedure code
- * @param {string} blockId The ID of the block being run
- * @param {object} args The arguments to pass to the block
- */
-runtimeFunctions.callAddonBlock = `const callAddonBlock = function*(procedureCode, blockId, args) {
-    const thread = globalState.thread;
-    const addonBlock = thread.target.runtime.getAddonBlock(procedureCode);
-    if (addonBlock) {
-        const target = thread.target;
-        addonBlock.callback(args, {
-            // Shim enough of BlockUtility to make addons work
-            peekStack () {
-                return blockId;
-            },
-            target
-        });
-        if (thread.status === 1 /* STATUS_PROMISE_WAIT */) {
-            yield;
-        }
-    }
 }`;
 
 /**
@@ -532,6 +525,19 @@ runtimeFunctions.mod = `const mod = (n, modulus) => {
     let result = n % modulus;
     if (result / modulus < 0) result += modulus;
     return result;
+}`;
+
+/**
+ * Implements Scratch tangent.
+ * @param {number} angle Angle in degrees.
+ * @returns {number} value of tangent or Infinity or -Infinity
+ */
+runtimeFunctions.tan = `const tan = (angle) => {
+    switch (angle % 360) {
+    case -270: case 90: return Infinity;
+    case -90: case 270: return -Infinity;
+    }
+    return Math.round(Math.tan((Math.PI * angle) / 180) * 1e10) / 1e10;
 }`;
 
 /**
