@@ -119,7 +119,7 @@ class TurboWarpBlocks {
 
     setCursor (args, util) {
         const cursor = Cast.toString(args.CURSOR);
-        this.runtime.renderer.canvas().style.cursor = cursor;
+        this.runtime.renderer.canvas.style.cursor = cursor;
     }
 }
 

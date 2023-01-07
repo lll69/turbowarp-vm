@@ -75,7 +75,7 @@ class Scratch3ProcedureBlocks {
             if (lowercaseValue === 'last key pressed') {
                 return util.ioQuery('keyboard', 'getLastKeyPressed');
             } else if (lowercaseValue === 'current cursor') {
-                return this.runtime.renderer.canvas().style.cursor;
+                return this.runtime.renderer.canvas.style.cursor;
             }
             // When the parameter is not found in the most recent procedure
             // call, the default is always 0.
