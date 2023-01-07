@@ -20,8 +20,7 @@ class TurboWarpBlocks {
 
         const procedureCode = 'set cursor to %s';
 
-        const vm = this.traps.vm;
-        vm.addAddonBlock({
+        runtime.addAddonBlock({
             procedureCode,
             arguments: ["CURSOR"],
             callback: this.setCursor,
