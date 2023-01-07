@@ -71,8 +71,11 @@ class Scratch3ProcedureBlocks {
         const value = util.getParam(args.VALUE);
         if (value === null) {
             // tw: support legacy block
-            if (String(args.VALUE).toLowerCase() === 'last key pressed') {
+            const lowercaseValue = String(args.VALUE).toLowerCase();
+            if (lowercaseValue === 'last key pressed') {
                 return util.ioQuery('keyboard', 'getLastKeyPressed');
+            } else if (lowercaseValue === 'current cursor') {
+                return this.runtime.renderer.canvas().style.cursor;
             }
             // When the parameter is not found in the most recent procedure
             // call, the default is always 0.

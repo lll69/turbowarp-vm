@@ -768,7 +768,10 @@ class Blocks {
             }
 
             if (wasMonitored && !block.isMonitored) {
-                this.runtime.requestHideMonitor(block.id);
+                // Tries to hide the monitor for specified block. If it exist, remove the monitor.
+                if (this.runtime.requestHideMonitor(block.id)) {
+                    //this.runtime.requestRemoveMonitor(block.id);
+                }
             } else if (!wasMonitored && block.isMonitored) {
                 // Tries to show the monitor for specified block. If it doesn't exist, add the monitor.
                 if (!this.runtime.requestShowMonitor(block.id)) {

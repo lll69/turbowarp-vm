@@ -57,6 +57,21 @@ class TurboWarpBlocks {
                             defaultValue: '0'
                         }
                     }
+                },
+                {
+                    opcode: 'setCursor',
+                    text: formatMessage({
+                        id: 'tw.blocks.setCursor',
+                        default: 'set cursor to [CURSOR]',
+                        description: 'Block that sets the cursor'
+                    }),
+                    blockType: BlockType.COMMAND,
+                    arguments: {
+                        CURSOR: {
+                            type: ArgumentType.STRING,
+                            defaultValue: ''
+                        }
+                    }
                 }
             ],
             menus: {
@@ -100,6 +115,11 @@ class TurboWarpBlocks {
     getButtonIsDown (args, util) {
         const button = Cast.toNumber(args.MOUSE_BUTTON);
         return util.ioQuery('mouse', 'getButtonIsDown', [button]);
+    }
+
+    setCursor (args, util) {
+        const cursor = Cast.toString(args.CURSOR);
+        this.runtime.renderer.canvas().style.cursor = cursor;
     }
 }
 
