@@ -188,9 +188,14 @@ class ScriptTreeGenerator {
             const index = this.script.arguments.lastIndexOf(name);
             if (index === -1) {
                 // Legacy support
-                if (name.toLowerCase() === 'last key pressed' || name.toLowerCase() === 'current cursor') {
+                if (name.toLowerCase() === 'last key pressed') {
                     return {
                         kind: 'tw.lastKeyPressed'
+                    };
+                } else if (name.toLowerCase() === 'current cursor') {
+                    return {
+                        kind: 'constant',
+                        value: ''
                     };
                 }
             }

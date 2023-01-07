@@ -17,6 +17,17 @@ class TurboWarpBlocks {
          * @type {Runtime}
          */
         this.runtime = runtime;
+
+        const procedureCode = 'set cursor to %s';
+
+        const vm = this.traps.vm;
+        vm.addAddonBlock({
+            procedureCode,
+            arguments: ["CURSOR"],
+            callback: this.setCursor,
+            // Ignored by VM but used by scratch-blocks traps
+            procedureCode
+        });
     }
 
     /**
