@@ -194,8 +194,7 @@ class ScriptTreeGenerator {
                     };
                 } else if (name.toLowerCase() === 'current cursor') {
                     return {
-                        kind: 'constant',
-                        value: ''
+                        kind: 'get.cursor'
                     };
                 }
             }

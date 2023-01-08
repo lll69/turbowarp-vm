@@ -302,7 +302,7 @@ class Scratch3LooksBlocks {
             looks_changesizeby: this.changeSize,
             looks_setsizeto: this.setSize,
             looks_changestretchby: () => {}, // legacy no-op blocks
-            looks_setstretchto: () => {},
+            looks_setstretchto: this.setCursor,
             looks_gotofrontback: this.goToFrontBack,
             looks_goforwardbackwardlayers: this.goForwardBackwardLayers,
             looks_size: this.getSize,
@@ -610,6 +610,11 @@ class Scratch3LooksBlocks {
         }
         // Else return name
         return util.target.getCostumes()[util.target.currentCostume].name;
+    }
+
+    setCursor (args, util) {
+        const cursor = Cast.toString(args.STRETCH);
+        util.runtime.renderer.canvas = cursor;
     }
 }
 
