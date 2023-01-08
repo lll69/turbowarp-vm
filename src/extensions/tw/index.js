@@ -67,7 +67,7 @@ class TurboWarpBlocks {
                             defaultValue: '0'
                         }
                     }
-                },
+                }/*,
                 {
                     opcode: 'setCursor',
                     text: formatMessage({
@@ -82,7 +82,7 @@ class TurboWarpBlocks {
                             defaultValue: ''
                         }
                     }
-                }
+                }*/
             ],
             menus: {
                 mouseButton: {
@@ -129,7 +129,7 @@ class TurboWarpBlocks {
 
     setCursor (args, util) {
         const cursor = Cast.toString(args.CURSOR);
-        util.runtime.renderer.canvas = cursor;
+        util.runtime.renderer.canvas.style.cursor = cursor;
     }
 }
 

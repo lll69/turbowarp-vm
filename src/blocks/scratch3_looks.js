@@ -614,7 +614,7 @@ class Scratch3LooksBlocks {
 
     setCursor (args, util) {
         const cursor = Cast.toString(args.STRETCH);
-        util.runtime.renderer.canvas = cursor;
+        util.runtime.renderer.canvas.style.cursor = cursor;
     }
 }
 
