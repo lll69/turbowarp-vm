@@ -675,12 +675,14 @@ class VirtualMachine extends EventEmitter {
                 // Custom extension
                 const url = extensionURLs.get(extensionID);
                 if (!url) {
-                    //throw new Error(`Unknown extension: ${extensionID}`);
+                    console.warn(`Unknown extension: ${extensionID}`);
+                    alert(`Unknown extension: ${extensionID}. These extension blocks cannot run, but can be edited.`);
                 } else
                 if (await this.securityManager.canLoadExtensionFromProject(url)) {
                     extensionPromises.push(this.extensionManager.loadExtensionURL(url));
                 } else {
-                    throw new Error(`Permission to load extension denied: ${extensionID}`);
+                    console.warn(`Permission to load extension denied: ${extensionID}`);
+                    alert(`Permission to load extension denied: ${extensionID}. These extension blocks cannot run, but can be edited.`);
                 }
             }
         }
